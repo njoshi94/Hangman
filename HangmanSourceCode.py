@@ -4,7 +4,6 @@ Hangman Game Using SVR Machine Learning Methods
     Stores Data on DynamoDB using boto3 
     Includes custom GUI interface built with tkinter 
     Also can be played locally utilizing openpyxl library
-
 """
 
 import tkinter as tk
@@ -20,6 +19,7 @@ from openpyxl import load_workbook
 from sklearn.svm import SVR
 from openpyxl.utils.dataframe import dataframe_to_rows
 from boto3.dynamodb.conditions import Key
+from decimal import Decimal 
 
 root = tk.Tk()
 
@@ -61,26 +61,29 @@ def game(block):
         cols = ['ID', 'Num_Letters', 'Num_Tries']
         df = df[cols]        
 
-        TableName = "Fails"
+        #Pulling data based on frequency of letters guessed
+        # and frequency of letters missed in failed words
+        #Additional cleaning required 
+        TableName = "Letter_Data"
 
         table = DB.Table(TableName)
         response = table.scan()
         
-        df1 = response['Items']
-        df1 = pd.DataFrame(df1)
-        cols = ['Letter', 'Fails']
-        df1 = df1[cols]
-
-        TableName = "Guesses"
-
-        table = DB.Table(TableName)
-        response = table.scan()
+        df_temp = response['Items']
+        df_temp = pd.DataFrame(df_temp)
         
-        df2 = response['Items']
-        df2 = pd.DataFrame(df2)
-        cols = ['Letter', 'Guesses'] 
-   
-    
+        df1 = df_temp[df_temp['Letter'] == 'Fails']
+        df1 = df1.transpose()
+        df1 = df1.drop(['Letter'], axis = 0)
+        df1.columns= ['Fails']
+        df1['Fails'] = pd.to_numeric(df1['Fails'])
+        
+        df2 = df_temp[df_temp['Letter'] == 'Guesses' ]
+        df2 = df2.transpose()
+        df2 = df2.drop(['Letter'], axis = 0)
+        df2.columns = ['Guesses']
+        df2['Guesses'] = pd.to_numeric(df2['Guesses'])
+        
     if OnLine.get() == 0:
         filename = 'ML1.xlsx'
         
@@ -113,6 +116,9 @@ def game(block):
         df = pd.read_excel(filename)
         df1 = pd.read_excel(filename, sheet_name = 'Sheet1')
         df2 = pd.read_excel(filename, sheet_name = 'Sheet2')
+        
+        df1 = df1.set_index('Letter')
+        df2 = df2.set_index('Letter')
         
     
     """ main function """
@@ -174,7 +180,6 @@ def game(block):
                 
                 for c in range (0, len(temp)):
                     if temp[c] in Top10Fails['Letter'].values:
-                        #p = p + 
                         FailAddition = Top10Fails.loc[Top10Fails['Letter'] == temp[c], 'Fails'] / FD
                         FTV = FailAddition.values
                         p = p + FTV[0]
@@ -184,17 +189,17 @@ def game(block):
                 #based on if word has common letters 
                 Top10Guesses = df2.nlargest(11, 'Guesses')
                 GD = max(df2['Guesses']) * 10 
-                #Can we add ML to determine that?
                 for c in range (0, len(temp)):
                     if temp[c] in Top10Guesses['Letter'].values:
-                        #p = p + 
                         GuessSubtraction = Top10Guesses.loc[Top10Guesses['Letter'] == temp[c], 'Guesses'] / GD
                         GTV = GuessSubtraction.values
                         p = p - GTV[0]
     else:
         #Same methodology as above for SVR and beyond 
-        # columns have to be set dynamically because DynamoDB table
-        #has extra column and playing in local mode will crash 
+        # Columns have to be set dynamically because DynamoDB table
+        # has unique identifier column that excel does not 
+        # and we have to set columns dynamically to adjust for this 
+        # difference when playing locally 
         if len(df.columns) == 1:
             width = 1 
         else: 
@@ -215,22 +220,20 @@ def game(block):
             FD = max(df1['Fails'])
             
             for c in range (0, len(temp)):
-                if temp[c] in Top10Fails['Letter'].values:
-                    #p = p + 
-                    FailAddition = Top10Fails.loc[Top10Fails['Letter'] == temp[c], 'Fails'] / FD
+                if temp[c] in Top10Fails.index.values:
+                    FailAddition = Top10Fails.loc[Top10Fails.index == temp[c], 'Fails'] / FD
                     q = FailAddition.idxmax()
                     p = p + FailAddition[q]         
         if max(df2['Guesses']) > 100:
             Top10Guesses = df2.nlargest(11, 'Guesses')
             GD = max(df2['Guesses']) * 10 
-            #Can we add ML to determine that?
             for c in range (0, len(temp)):
-                if temp[c] in Top10Guesses['Letter'].values:
-                    #p = p + 
-                    GuessSubtraction = Top10Guesses.loc[Top10Guesses['Letter'] == temp[c], 'Guesses'] / GD
+                if temp[c] in Top10Guesses.index.values:
+                    GuessSubtraction = Top10Guesses.loc[Top10Guesses.index == temp[c], 'Guesses'] / GD
                     q = GuessSubtraction.idxmax()
                     p = p - GuessSubtraction[q]                
-    p = round(p)
+    #Minimum number of guesses is set to 3 
+    p = max(round(p),3)
     
     #Create Word data structure that contains the letters and key if it has 
     #already been guessed
@@ -252,7 +255,7 @@ def game(block):
         LetterEntry.delete(0, 'end')
         block.set('True')
         Special.set("")
-        while len(letter) > 1 and letter != 'quit':
+        if len(letter) > 1 and letter != 'quit':
             if letter =='list':
                 #Creates a list of letters already guessed
                 Lister = ''
@@ -261,15 +264,10 @@ def game(block):
                         Lister = Lister + key + ', '
                 Lister = Lister[:-2]                        
                 Special.set(Lister)
-            Command.set("Please input a letter: ")
-            root.wait_variable(block)
-            letter = LetterEntry.get()
-            LetterEntry.delete(0, 'end')
-            block.set('True')
-            Special.set("")
+            j = 0 
         if letter == 'quit':
             break
-        if len(letter) == 1 and letter != ' ':
+        if len(letter) == 1:
             if hashtable[letter] == 1:
                 #Checks if letter has already been set 
                 Special.set("You already guessed that!")
@@ -291,9 +289,7 @@ def game(block):
     Tries.set("")
     Command.set("")
     Special.set("")
-    
-    
-    
+
     if i < p and letter != 'quit':
         Printer.set("Congrats! You won!")
         Tries.set("The word was: " + temp)
@@ -312,6 +308,7 @@ def game(block):
             for r in dataframe_to_rows(df2, index=False, header=True):
                 ws2.append(r)
             wb.save(filename)
+
         else:
             #Updates DynamoDB tables with results of winning game 
             TableName = "Tries"
@@ -325,24 +322,44 @@ def game(block):
                     }            
                 )
             
-            TableName = "Guesses"
+            TableName = "Letter_Data"
             table = DB.Table(TableName)
             for key, value in hashtable.items():
                 if value == 1:
-                    df2.loc[df2['Letter'] == key, 'Guesses'] +=1
-            df2.loc[df2['Letter'] == 'Total', 'Guesses'] +=1
-            i = 0 
-            while i < len(df2):
-                response = table.update_item(
-                    Key = {
-                        'Letter' : df2['Letter'][i] 
-                        },
-                    UpdateExpression = 'SET Guesses =  :val1',
-                    ExpressionAttributeValues = {
-                        ':val1' : df2['Guesses'][i]
-                        }
-                    )
+                    df2.loc[df2.index == key, 'Guesses'] +=1
+            df2.loc[df2.index == 'Total', 'Guesses'] +=1
+            i = 1
+            AttributeVals = {}
+            AttributeNames = {}
+            Expression = 'SET '
+            for indexer in df2.index.values:
+                Name = '#name' + str(i)
+                AttributeNames[Name] = indexer 
+                Expression = Expression + Name + ' = :val'+ str(i) + ', '
+                val_code = ':val'+ str(i) 
+                Val = df2.loc[df2.index == indexer, 'Guesses'] 
+                var = Val[0]
+                
+                # Local variables are stored as int64s 
+                # and online variables are floats
+                # If conversion required to handle difference in types
+                # to make sure code doesn't fail when playing locally 
+                if type(var) == np.int64:
+                    var = var.astype(np.int32)
+                    var = float(var)
+
+                AttributeVals[val_code] = Decimal(var)
                 i = i + 1 
+            Expression = Expression[:-2]
+            response = table.update_item(
+                Key = {
+                    'Letter' : 'Guesses' 
+                    },
+                UpdateExpression = Expression,
+                ExpressionAttributeValues = AttributeVals,
+                ExpressionAttributeNames = AttributeNames
+                )
+                
 
         Command.set("Enter 'y' to play agan: ")
         root.wait_variable(block)
@@ -380,6 +397,7 @@ def game(block):
             for r in dataframe_to_rows(df2, index=False, header=True):
                 ws2.append(r)
             wb.save(filename)  
+            
         else:
             #Updates DynamoDB tables with results of losing game 
             TableName = "Tries"
@@ -393,46 +411,76 @@ def game(block):
                     }            
                 )
             
-            TableName = "Fails"
+            TableName = "Letter_Data"
             table = DB.Table(TableName)
             k = 0 
             for c in range(0,len(word)):
                 if word['value'][c] == 0:
                     m = word['letter'][c]            
-                    df1.loc[df1['Letter'] == m , 'Fails'] +=1
+                    df1.loc[df1.index == m , 'Fails'] +=1
                     k = k + 1 
-            df1.loc[df1['Letter'] == 'Total', 'Fails'] += k
-            i = 0
-            while i < len(df1):
-                response = table.update_item(
-                    Key = {
-                        'Letter' : df1['Letter'][i] 
-                        },
-                    UpdateExpression = 'SET Fails = :val1',
-                    ExpressionAttributeValues = {
-                        ':val1' : df1['Fails'][i]
-                        }
-                    )
-                i = i + 1
-            
-            TableName = "Guesses"
+            df1.loc[df1.index == 'Total', 'Fails'] += k
+            i = 1
+            AttributeVals = {}
+            AttributeNames = {}
+            Expression = 'SET '
+            for indexer in df1.index.values:
+                Name = '#name' + str(i)
+                AttributeNames[Name] = indexer
+                Expression = Expression + Name + ' = :val'+ str(i) + ', '
+                val_code = ':val'+ str(i) 
+                Val = df1.loc[df2.index == indexer, 'Fails'] 
+                var = Val[0]
+                
+                if type(var) == np.int64:
+                    var = var.astype(np.int32)
+                    var = float(var)
+
+                AttributeVals[val_code] = Decimal(var)
+                i = i + 1 
+            Expression = Expression[:-2]
+            response = table.update_item(
+                Key = {
+                    'Letter' : 'Fails' 
+                    },
+                UpdateExpression = Expression,
+                ExpressionAttributeValues = AttributeVals,
+                ExpressionAttributeNames = AttributeNames
+                )
+
+            TableName = "Letter_Data"
             table = DB.Table(TableName)
             for key, value in hashtable.items():
                 if value == 1:
-                    df2.loc[df2['Letter'] == key, 'Guesses'] +=1
-            df2.loc[df2['Letter'] == 'Total', 'Guesses'] +=1 
-            i = 0
-            while i < len(df2):
-                response = table.update_item(
-                    Key = {
-                        'Letter' : df2['Letter'][i] 
-                        },
-                    UpdateExpression = 'SET Guesses = :val1',
-                    ExpressionAttributeValues = {
-                        ':val1' : df2['Guesses'][i]
-                        }
-                    )
+                    df2.loc[df2.index == key, 'Guesses'] +=1
+            df2.loc[df2.index == 'Total', 'Guesses'] +=1
+            i = 1
+            AttributeVals = {}
+            AttributeNames = {}
+            Expression = 'SET '
+            for indexer in df2.index.values:
+                Name = '#name' + str(i)
+                AttributeNames[Name] = indexer 
+                Expression = Expression + Name + ' = :val'+ str(i) + ', '
+                val_code = ':val'+ str(i) 
+                Val = df2.loc[df2.index == indexer, 'Guesses'] 
+                var = Val[0]
+                
+                if type(var) == np.int64:
+                    var = var.astype(np.int32)
+                    var = float(var)
+
+                AttributeVals[val_code] = Decimal(var) 
                 i = i + 1 
+            Expression = Expression[:-2]
+            response = table.update_item(
+                Key = {
+                    'Letter' : 'Guesses' 
+                    },
+                UpdateExpression = Expression,
+                ExpressionAttributeValues = AttributeVals,
+                ExpressionAttributeNames = AttributeNames
+                )
         
         Command.set("Enter 'y' to play agan: ")
         root.wait_variable(block)
