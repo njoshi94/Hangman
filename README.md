@@ -2,7 +2,7 @@ Hangman Instructions and Documentation:
 
 Hello! Welcome to my Hangman Game utilizing Machine Learning and AWS
 
-The download link for the exe file can be found here: https://tinyurl.com/ycjhrqss
+The download link for the exe file can be found here: https://tinyurl.com/ybmgvltr
 
 Below are notes regarding the game:
 
